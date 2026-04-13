@@ -10,6 +10,44 @@ from profil import MON_PROFIL
 claude = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 notion = Client(auth=os.getenv("NOTION_API_KEY"))
 
+MOUGINS_LAT = 43.6000
+MOUGINS_LON = 7.0333
+
+def calculer_distance(ville):
+    """Calcule la distance entre une ville et Mougins via l'API gouvernementale gratuite."""
+    try:
+        r = requests.get(
+            "https://api-adresse.data.gouv.fr/search/",
+            params={"q": ville, "limit": 1}
+        )
+        data = r.json()
+        if not data["features"]:
+            return None
+        coords = data["features"][0]["geometry"]["coordinates"]
+        lon, lat = coords[0], coords[1]
+
+        # Formule de Haversine (calcul de distance entre 2 points GPS)
+        from math import radians, sin, cos, sqrt, atan2
+        R = 6371
+        dlat = radians(lat - MOUGINS_LAT)
+        dlon = radians(lon - MOUGINS_LON)
+        a = sin(dlat/2)**2 + cos(radians(MOUGINS_LAT)) * cos(radians(lat)) * sin(dlon/2)**2
+        return round(R * 2 * atan2(sqrt(a), sqrt(1-a)))
+    except:
+        return None
+
+def formater_lieu(lieu_brut):
+    """Transforme le lieu brut en texte lisible avec distance."""
+    if not lieu_brut:
+        return "Non précisé"
+    lieu_lower = lieu_brut.lower()
+    if any(mot in lieu_lower for mot in ["remote", "télétravail", "teletravail", "distanciel", "full remote"]):
+        return "Remote 🌐"
+    distance = calculer_distance(lieu_brut)
+    if distance is not None:
+        return f"{lieu_brut} ({distance} km de Mougins)"
+    return lieu_brut
+
 tools = [
     {
         "name": "chercher_offres",
@@ -33,7 +71,8 @@ tools = [
                 "score":      {"type": "number"},
                 "salaire":    {"type": "string"},
                 "mission":    {"type": "string"},
-                "lien":       {"type": "string"}
+                "lien":       {"type": "string"},
+                "lieu":       {"type": "string", "description": "Ville du poste, 'Remote' ou 'Télétravail'"}
             },
             "required": ["titre", "entreprise", "score", "mission"]
         }
@@ -72,6 +111,7 @@ def executer_outil(nom, params):
         return r.json()
 
     elif nom == "sauvegarder_offre":
+        lieu_formate = formater_lieu(params.get("lieu", ""))
         notion.pages.create(
             parent={"database_id": os.getenv("NOTION_DB_OFFRES")},
             properties={
@@ -81,6 +121,7 @@ def executer_outil(nom, params):
                 "Salaire":        {"rich_text": [{"text": {"content": params.get("salaire","N/A")}}]},
                 "Mission":        {"rich_text": [{"text": {"content": params.get("mission","")[:2000]}}]},
                 "Lien":           {"url":       params.get("lien") or None},
+                "Lieu":           {"rich_text": [{"text": {"content": lieu_formate}}]},
                 "Date":           {"date":      {"start": str(date.today())}}
             }
         )
@@ -112,12 +153,13 @@ Voici son profil :
 {MON_PROFIL}
 
 Ce que tu dois faire aujourd'hui :
-1. Cherche des offres d'emploi qui correspondent à ce profil
+1. Cherche des offres pour ces métiers : "Lead Data Engineer", "Chef de projet data", "Senior Data Analyst"
 2. Pour chaque offre, donne un score de 0 à 100
 3. Sauvegarde dans Notion seulement les offres avec un score de 60 ou plus
-4. Trouve 3 entreprises intéressantes qui pourraient recruter ce profil bientôt
-5. Pour chaque entreprise : note un contact RH, un résumé, le salaire estimé
-6. Sauvegarde ces entreprises dans Notion
+4. Pour le champ "lieu", indique la ville exacte du poste, ou "Remote" si c'est en télétravail
+5. Trouve 3 entreprises intéressantes qui pourraient recruter ce profil bientôt
+6. Pour chaque entreprise : note un contact RH, un résumé, le salaire estimé
+7. Sauvegarde ces entreprises dans Notion
 
 Go !
 """
