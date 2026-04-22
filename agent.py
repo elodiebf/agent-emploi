@@ -14,7 +14,6 @@ MOUGINS_LAT = 43.6000
 MOUGINS_LON = 7.0333
 
 def calculer_distance(ville):
-    """Calcule la distance entre une ville et Mougins via l'API gouvernementale gratuite."""
     try:
         r = requests.get(
             "https://api-adresse.data.gouv.fr/search/",
@@ -25,8 +24,6 @@ def calculer_distance(ville):
             return None
         coords = data["features"][0]["geometry"]["coordinates"]
         lon, lat = coords[0], coords[1]
-
-        # Formule de Haversine (calcul de distance entre 2 points GPS)
         from math import radians, sin, cos, sqrt, atan2
         R = 6371
         dlat = radians(lat - MOUGINS_LAT)
@@ -37,7 +34,6 @@ def calculer_distance(ville):
         return None
 
 def formater_lieu(lieu_brut):
-    """Transforme le lieu brut en texte lisible avec distance."""
     if not lieu_brut:
         return "Non précisé"
     lieu_lower = lieu_brut.lower()
@@ -51,7 +47,18 @@ def formater_lieu(lieu_brut):
 tools = [
     {
         "name": "chercher_offres",
-        "description": "Cherche des offres d'emploi sur internet",
+        "description": "Cherche des offres d'emploi salariat sur internet",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "metier": {"type": "string"}
+            },
+            "required": ["metier"]
+        }
+    },
+    {
+        "name": "chercher_missions_freelance",
+        "description": "Cherche des missions freelance sur Malt, Comet, Freelance.com",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -62,7 +69,7 @@ tools = [
     },
     {
         "name": "sauvegarder_offre",
-        "description": "Sauvegarde une offre dans Notion",
+        "description": "Sauvegarde une offre salariat dans Notion",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -72,9 +79,28 @@ tools = [
                 "salaire":    {"type": "string"},
                 "mission":    {"type": "string"},
                 "lien":       {"type": "string"},
-                "lieu":       {"type": "string", "description": "Ville du poste, 'Remote' ou 'Télétravail'"}
+                "lieu":       {"type": "string"}
             },
             "required": ["titre", "entreprise", "score", "mission"]
+        }
+    },
+    {
+        "name": "sauvegarder_mission_freelance",
+        "description": "Sauvegarde une mission freelance dans Notion",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "titre":       {"type": "string"},
+                "client":      {"type": "string"},
+                "score":       {"type": "number"},
+                "tjm":         {"type": "string", "description": "Taux Journalier Moyen ex: 600-800€/jour"},
+                "duree":       {"type": "string", "description": "ex: 3 mois, 6 mois"},
+                "lieu":        {"type": "string"},
+                "mission":     {"type": "string"},
+                "lien":        {"type": "string"},
+                "plateforme":  {"type": "string", "description": "ex: Malt, Comet, Freelance.com"}
+            },
+            "required": ["titre", "score", "mission", "plateforme"]
         }
     },
     {
@@ -110,6 +136,44 @@ def executer_outil(nom, params):
         )
         return r.json()
 
+    elif nom == "chercher_missions_freelance":
+        # Recherche sur les 3 plateformes principales
+        resultats = []
+
+        # Freelance.com API (gratuite)
+        try:
+            r = requests.get(
+                "https://www.freelance.com/api/projects/search",
+                params={
+                    "keywords": params["metier"],
+                    "limit": 10
+                },
+                headers={"Accept": "application/json"}
+            )
+            if r.status_code == 200:
+                resultats.append({"plateforme": "Freelance.com", "data": r.json()})
+        except:
+            pass
+
+        # Adzuna pour les missions freelance/contract
+        try:
+            r = requests.get(
+                "https://api.adzuna.com/v1/api/jobs/fr/search/1",
+                params={
+                    "app_id":           os.getenv("ADZUNA_APP_ID"),
+                    "app_key":          os.getenv("ADZUNA_APP_KEY"),
+                    "results_per_page": 10,
+                    "what":             f"{params['metier']} freelance mission",
+                    "contract":         1,
+                    "content-type":     "application/json"
+                }
+            )
+            resultats.append({"plateforme": "Adzuna Freelance", "data": r.json()})
+        except:
+            pass
+
+        return resultats
+
     elif nom == "sauvegarder_offre":
         lieu_formate = formater_lieu(params.get("lieu", ""))
         notion.pages.create(
@@ -123,6 +187,25 @@ def executer_outil(nom, params):
                 "Lien":           {"url":       params.get("lien") or None},
                 "Lieu":           {"rich_text": [{"text": {"content": lieu_formate}}]},
                 "Date":           {"date":      {"start": str(date.today())}}
+            }
+        )
+        return {"status": "ok"}
+
+    elif nom == "sauvegarder_mission_freelance":
+        lieu_formate = formater_lieu(params.get("lieu", "Remote"))
+        notion.pages.create(
+            parent={"database_id": os.getenv("NOTION_DB_FREELANCE")},
+            properties={
+                "Titre de la mission": {"title":     [{"text": {"content": params["titre"]}}]},
+                "Client":              {"rich_text": [{"text": {"content": params.get("client","")}}]},
+                "Score":               {"number":    params.get("score", 0)},
+                "TJM proposé":         {"rich_text": [{"text": {"content": params.get("tjm","N/A")}}]},
+                "Durée":               {"rich_text": [{"text": {"content": params.get("duree","N/A")}}]},
+                "Lieu":                {"rich_text": [{"text": {"content": lieu_formate}}]},
+                "Mission":             {"rich_text": [{"text": {"content": params.get("mission","")[:2000]}}]},
+                "Lien":                {"url":       params.get("lien") or None},
+                "Plateforme":          {"rich_text": [{"text": {"content": params.get("plateforme","")}}]},
+                "Date":                {"date":      {"start": str(date.today())}}
             }
         )
         return {"status": "ok"}
@@ -153,13 +236,23 @@ Voici son profil :
 {MON_PROFIL}
 
 Ce que tu dois faire aujourd'hui :
-1. Cherche des offres pour ces métiers : "Lead Data Engineer", "Chef de projet data", "Senior Data Analyst"
-2. Pour chaque offre, donne un score de 0 à 100
-3. Sauvegarde dans Notion seulement les offres avec un score de 60 ou plus
-4. Pour le champ "lieu", indique la ville exacte du poste, ou "Remote" si c'est en télétravail
-5. Trouve 3 entreprises intéressantes qui pourraient recruter ce profil bientôt
-6. Pour chaque entreprise : note un contact RH, un résumé, le salaire estimé
-7. Sauvegarde ces entreprises dans Notion
+
+PARTIE 1 - OFFRES SALARIAT :
+1. Cherche des offres pour : "Lead Data Engineer", "Chef de projet data", "Senior Data Analyst"
+2. Score chaque offre de 0 à 100
+3. Sauvegarde uniquement les offres avec score >= 60
+4. Indique le lieu exact ou "Remote"
+
+PARTIE 2 - MISSIONS FREELANCE :
+5. Cherche des missions freelance pour : "Data Engineer freelance", "Data Analyst mission"
+6. Score chaque mission de 0 à 100
+7. Sauvegarde uniquement les missions avec score >= 60
+8. Indique le TJM, la durée et le lieu
+
+PARTIE 3 - ENTREPRISES :
+9. Trouve 3 entreprises qui pourraient recruter ce profil bientôt
+10. Pour chaque entreprise : contact RH, résumé, salaire estimé
+11. Sauvegarde dans Notion
 
 Go !
 """
