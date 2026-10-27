@@ -4,10 +4,15 @@ on:
   schedule:
     - cron: '0 7 * * 1-5'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Test sans écrire dans Notion (1 = oui)"
+        default: "0"
 
 jobs:
   run:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -16,9 +21,10 @@ jobs:
       - run: pip install anthropic notion-client requests python-dotenv
       - run: python agent.py
         env:
+          DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_DB_OFFRES: ${{ secrets.NOTION_DB_OFFRES }}
-          NOTION_DB_ENTREPRISES: ${{ secrets.NOTION_DB_ENTREPRISES }}
+          NOTION_DB_FREELANCE: ${{ secrets.NOTION_DB_FREELANCE }}
           ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
           ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
