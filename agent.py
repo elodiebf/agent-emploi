@@ -36,7 +36,7 @@ REQUETES_SALARIAT = ["Lead Data Engineer", "Chef de projet data", "Senior Data A
 REQUETES_FREELANCE = ["Data Engineer", "Data Analyst"]
 RESULTATS_PAR_REQUETE = 20
 
-SEUIL_SAUVEGARDE = 60           # score minimum pour enregistrer une offre
+SEUIL_SAUVEGARDE = 80           # score minimum pour enregistrer une offre
 MAX_CONTACTS_PAR_JOUR = 15      # plafond de recherches de contact par exécution
 RECHERCHES_WEB_PAR_OFFRE = 3    # plafond de recherches web par offre (0,01 $ l'une)
 TAILLE_LOT_NOTATION = 25
