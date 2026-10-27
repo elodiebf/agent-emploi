@@ -337,33 +337,50 @@ def extraire_json(texte, ouvrant="{", fermant="}"):
 def noter_offres(offres, type_poste):
     """Note les offres par lots avec le modèle léger. Ajoute o['score']."""
     for i in range(0, len(offres), TAILLE_LOT_NOTATION):
-        lot = offres[i:i + TAILLE_LOT_NOTATION]
-        compact = [{"id": o["id"], "titre": o["titre"], "entreprise": o["entreprise"],
-                    "lieu": o["lieu_brut"], "salaire": o["salaire"],
-                    "description": o["description"][:LONGUEUR_DESCRIPTION]} for o in lot]
-        response = claude.messages.create(
-            model=MODELE_TRI,
-            max_tokens=2000,
-            system=(
-                "Tu évalues l'adéquation entre des offres et un profil. "
-                "Note chaque offre de 0 à 100 : intitulé et niveau de séniorité, compétences, "
-                "localisation (proche de Mougins/Cannes–Monaco ou remote), salaire si indiqué. "
-                "Ne suppose rien qui n'est pas écrit dans l'offre.\n\n"
-                f"Profil :\n{MON_PROFIL}"
-            ),
-            messages=[{"role": "user", "content":
-                f"Type : {type_poste}\nOffres :\n{json.dumps(compact, ensure_ascii=False)}\n\n"
-                'Réponds uniquement par un tableau JSON : [{"id": "...", "score": 0}]'}],
-        )
-        compter(response)
-        notes = extraire_json(texte_reponse(response), "[", "]") or []
-        par_id = {str(n.get("id")): n.get("score") for n in notes if isinstance(n, dict)}
+        noter_lot(offres[i:i + TAILLE_LOT_NOTATION], type_poste)
+
+
+def noter_lot(lot, type_poste):
+    compact = [{"id": o["id"], "titre": o["titre"], "entreprise": o["entreprise"],
+                "lieu": o["lieu_brut"], "salaire": o["salaire"],
+                "description": o["description"][:LONGUEUR_DESCRIPTION]} for o in lot]
+    response = claude.messages.create(
+        model=MODELE_TRI,
+        max_tokens=8000,   # marge pour la réflexion du modèle, qui compte dans cette limite
+        system=(
+            "Tu évalues l'adéquation entre des offres et un profil. "
+            "Note chaque offre de 0 à 100 : intitulé et niveau de séniorité, compétences, "
+            "localisation (proche de Mougins/Cannes–Monaco ou remote), salaire si indiqué. "
+            "Ne suppose rien qui n'est pas écrit dans l'offre.\n\n"
+            f"Profil :\n{MON_PROFIL}"
+        ),
+        messages=[{"role": "user", "content":
+            f"Type : {type_poste}\nOffres :\n{json.dumps(compact, ensure_ascii=False)}\n\n"
+            'Réponds uniquement par un tableau JSON compact, sans commentaire : '
+            '[{"id": "...", "score": 0}]'}],
+    )
+    compter(response)
+    notes = extraire_json(texte_reponse(response), "[", "]") or []
+    par_id = {str(n.get("id")): n.get("score") for n in notes if isinstance(n, dict)}
+    manquantes = [o for o in lot if not isinstance(par_id.get(o["id"]), (int, float))]
+
+    if manquantes and len(lot) > 1:
+        print(f"⚠️  {len(manquantes)}/{len(lot)} offre(s) non notée(s) "
+              f"(arrêt : {response.stop_reason}) → nouvel essai en lots plus petits")
         for o in lot:
-            s = par_id.get(o["id"])
-            o["score"] = int(s) if isinstance(s, (int, float)) else 0
-        manquants = sum(1 for o in lot if o["id"] not in par_id)
-        if manquants:
-            print(f"⚠️  {manquants} offre(s) non notée(s) dans ce lot (score 0)")
+            if o not in manquantes:
+                o["score"] = int(par_id[o["id"]])
+        moitie = max(1, len(manquantes) // 2)
+        noter_lot(manquantes[:moitie], type_poste)
+        if manquantes[moitie:]:
+            noter_lot(manquantes[moitie:], type_poste)
+        return
+
+    for o in lot:
+        s = par_id.get(o["id"])
+        o["score"] = int(s) if isinstance(s, (int, float)) else 0
+    if manquantes:
+        print(f"⚠️  offre non notée après nouvel essai (score 0) : {lot[0]['titre']}")
 
 
 CONSIGNES_MESSAGE = f"""Message LinkedIn de première prise de contact :
@@ -500,6 +517,8 @@ def partie_salariat():
     if not offres:
         return
     noter_offres(offres, "CDI / salariat")
+    meilleures = sorted(offres, key=lambda o: o["score"], reverse=True)[:5]
+    print("🏅 Meilleurs scores : " + " | ".join(f"{o['score']} {o['titre'][:40]}" for o in meilleures))
     retenues = sorted([o for o in offres if o["score"] >= SEUIL_SAUVEGARDE],
                       key=lambda o: o["score"], reverse=True)
     if len(retenues) > MAX_CONTACTS_PAR_JOUR:
