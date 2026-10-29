@@ -32,14 +32,22 @@ from profil import MON_PROFIL
 MODELE_TRI = "claude-haiku-5-5"        # notation des offres (peu coûteux)
 MODELE_CONTACT = "claude-sonnet-5-5"   # recherche de contact + message
 
-REQUETES_SALARIAT = ["Lead Data Engineer", "Chef de projet data", "Senior Data Analyst"]
+# [CORRECTIF] ajout de « Analytics Engineer » (ton positionnement) — retire-le si tu ne le veux pas
+REQUETES_SALARIAT = ["Lead Data Engineer", "Chef de projet data", "Senior Data Analyst",
+                     "Analytics Engineer"]
 RESULTATS_PAR_REQUETE = 20
+
+# [CORRECTIF] fenêtre de fraîcheur courte pour ne pas renoter chaque jour les mêmes offres.
+# Le lundi, fenêtre élargie pour couvrir le week-end (le robot ne tourne qu'en semaine).
+LUNDI = date.today().weekday() == 0
+ADZUNA_MAX_JOURS = 4 if LUNDI else 2      # paramètre Adzuna « max_days_old »
 
 # France Travail (API Offres d'emploi v2) — activé si les identifiants sont présents
 FT_CLIENT_ID = os.getenv("FT_CLIENT_ID")
 FT_CLIENT_SECRET = os.getenv("FT_CLIENT_SECRET")
 FT_DEPARTEMENTS = ["06"]        # Alpes-Maritimes (le remote national reste couvert par Adzuna)
-FT_PUBLIEE_DEPUIS = 7           # jours ; les offres déjà vues sont de toute façon dédoublonnées
+FT_PUBLIEE_DEPUIS = 3 if LUNDI else 1   # valeurs acceptées par l'API : 1, 3, 7, 14, 31
+FT_TYPE_CONTRAT = "CDI"         # [CORRECTIF] exclut CDD, intérim, saisonnier
 FT_RESULTATS_PAR_REQUETE = 50
 
 SEUIL_SAUVEGARDE = 60           # score minimum pour enregistrer une offre
@@ -148,6 +156,7 @@ def chercher_adzuna(requete):
         "app_key": os.getenv("ADZUNA_APP_KEY"),
         "results_per_page": RESULTATS_PAR_REQUETE,
         "what": requete,
+        "max_days_old": ADZUNA_MAX_JOURS,   # [CORRECTIF] évite de renoter les mêmes offres
         "content-type": "application/json",
     }
     try:
@@ -176,6 +185,7 @@ def chercher_adzuna(requete):
 
 
 _ft_token = None
+_ft_avertissement_affiche = False
 
 
 def token_france_travail():
@@ -194,7 +204,12 @@ def token_france_travail():
 
 
 def chercher_france_travail(requete):
+    global _ft_avertissement_affiche
     if not (FT_CLIENT_ID and FT_CLIENT_SECRET):
+        # [CORRECTIF] signale la désactivation au lieu de renvoyer une liste vide en silence
+        if not _ft_avertissement_affiche:
+            print("ℹ️  France Travail désactivé : FT_CLIENT_ID / FT_CLIENT_SECRET absents")
+            _ft_avertissement_affiche = True
         return []
     offres = []
     for dep in FT_DEPARTEMENTS:
@@ -204,6 +219,7 @@ def chercher_france_travail(requete):
                 headers={"Authorization": f"Bearer {token_france_travail()}",
                          "Accept": "application/json"},
                 params={"motsCles": requete, "departement": dep,
+                        "typeContrat": FT_TYPE_CONTRAT,
                         "publieeDepuis": FT_PUBLIEE_DEPUIS,
                         "range": f"0-{FT_RESULTATS_PAR_REQUETE - 1}"},
                 timeout=20)
@@ -527,9 +543,15 @@ def partie_salariat():
 
     cache = dict(contacts_connus)
     for o in retenues:
-        print(f"👤 {o['score']:>3} | {o['titre']} – {o['entreprise']}")
+        print(f"👤 {o['score']:>3} | {o['titre']} – {o['entreprise'] or 'entreprise non précisée'}")
         connu = cache.get((o["entreprise"] or "").lower())
         try:
+            if not o["entreprise"]:
+                # [CORRECTIF] offre anonyme : pas de recherche de contact (coûteuse et vaine)
+                vide = {"nom": None, "poste": None, "linkedin": None, "source": None,
+                        "fiabilite": "Non trouvé"}
+                enregistrer_offre(o, vide, "")
+                continue
             if connu:
                 contact, message = connu, rediger_message_seul(o, connu)
             else:
