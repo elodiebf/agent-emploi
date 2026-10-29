@@ -55,7 +55,7 @@ SEUIL_SAUVEGARDE = 60           # score minimum pour enregistrer une offre
 MAX_CONTACTS_PAR_JOUR = 15      # plafond de recherches de contact par exécution
 RECHERCHES_WEB_PAR_OFFRE = 3    # plafond de recherches web par offre (0,01 $ l'une)
 TAILLE_LOT_NOTATION = 25
-LONGUEUR_DESCRIPTION = 1200      # caractères de description envoyés pour la notation
+LONGUEUR_DESCRIPTION = 600      # caractères de description envoyés pour la notation
 LONGUEUR_MAX_MESSAGE = 300      # note d'invitation LinkedIn
 
 # DRY_RUN=1 : n'écrit rien dans Notion, affiche ce qui serait enregistré.
@@ -166,6 +166,8 @@ def chercher_adzuna(requete):
     try:
         r = requests.get("https://api.adzuna.com/v1/api/jobs/fr/search/1",
                          params=params, timeout=20)
+          if r.status_code != 200:
+            print(f"⚠️  Jeton France Travail refusé : {r.status_code} {r.text}")
         r.raise_for_status()
         resultats = r.json().get("results", [])
     except Exception as e:
