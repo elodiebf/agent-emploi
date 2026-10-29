@@ -16,6 +16,7 @@ import os
 import re
 import json
 import html
+import time
 from datetime import date
 from math import radians, sin, cos, sqrt, atan2
 
@@ -54,7 +55,7 @@ SEUIL_SAUVEGARDE = 60           # score minimum pour enregistrer une offre
 MAX_CONTACTS_PAR_JOUR = 15      # plafond de recherches de contact par exécution
 RECHERCHES_WEB_PAR_OFFRE = 3    # plafond de recherches web par offre (0,01 $ l'une)
 TAILLE_LOT_NOTATION = 25
-LONGUEUR_DESCRIPTION = 600      # caractères de description envoyés pour la notation
+LONGUEUR_DESCRIPTION = 1200      # caractères de description envoyés pour la notation
 LONGUEUR_MAX_MESSAGE = 300      # note d'invitation LinkedIn
 
 # DRY_RUN=1 : n'écrit rien dans Notion, affiche ce qui serait enregistré.
@@ -66,6 +67,9 @@ claude = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 notion = Client(auth=os.getenv("NOTION_API_KEY"))
 
 DB_OFFRES = os.getenv("NOTION_DB_OFFRES")
+# [AJOUT] base des offres notées sous le seuil : sert uniquement à ne pas les renoter
+DB_ECARTEES = os.getenv("NOTION_DB_ECARTEES")
+PAUSE_NOTION = 0.35             # secondes entre deux écritures (limite Notion ~3 requêtes/s)
 
 # Suivi de la consommation, affiché en fin d'exécution
 CONSO = {"input": 0, "output": 0, "cache_read": 0, "recherches_web": 0, "appels": 0}
@@ -334,6 +338,33 @@ def enregistrer_offre(o, contact, message):
     notion.pages.create(parent={"database_id": DB_OFFRES}, properties=props)
 
 
+def enregistrer_ecartees(offres):
+    """[AJOUT] Mémorise les offres sous le seuil (titre, entreprise, score, lien, date)."""
+    if not offres:
+        return
+    if not DB_ECARTEES:
+        print(f"ℹ️  {len(offres)} offre(s) écartée(s) non mémorisée(s) : NOTION_DB_ECARTEES absent")
+        return
+    if DRY_RUN:
+        print(f"🗂️  DRY_RUN : {len(offres)} offre(s) écartée(s) seraient mémorisées")
+        return
+    ok = 0
+    for o in offres:
+        try:
+            notion.pages.create(parent={"database_id": DB_ECARTEES}, properties={
+                "Titre du poste": {"title": [{"text": {"content": o["titre"][:2000]}}]},
+                "Entreprise": rt(o["entreprise"]),
+                "Score": {"number": o["score"]},
+                "Lien": {"url": o["lien"] or None},
+                "Date": {"date": {"start": str(date.today())}},
+            })
+            ok += 1
+        except Exception as e:
+            print(f"   ↳ ⚠️ offre écartée non mémorisée ({o['titre'][:40]}) : {e}")
+        time.sleep(PAUSE_NOTION)
+    print(f"🗂️  {ok}/{len(offres)} offre(s) écartée(s) mémorisée(s)")
+
+
 # ─────────────────────────── CLAUDE ───────────────────────────
 
 def texte_reponse(response):
@@ -395,6 +426,8 @@ def noter_lot(lot, type_poste):
     for o in lot:
         s = par_id.get(o["id"])
         o["score"] = int(s) if isinstance(s, (int, float)) else 0
+        # [AJOUT] un échec de notation n'est pas une vraie note : on ne la mémorise pas
+        o["echec_notation"] = not isinstance(s, (int, float))
     if manquantes:
         print(f"⚠️  offre non notée après nouvel essai (score 0) : {lot[0]['titre']}")
 
@@ -524,6 +557,10 @@ def nouvelles_offres(offres, ids_vus, cles_vues):
 
 def partie_salariat():
     ids_vus, cles_vues, contacts_connus = charger_deja_vus(DB_OFFRES, "Titre du poste")
+    # [AJOUT] les offres déjà écartées comptent aussi comme « déjà vues »
+    ids_ec, cles_ec, _ = charger_deja_vus(DB_ECARTEES, "Titre du poste")
+    ids_vus |= ids_ec
+    cles_vues |= cles_ec
     adzuna = [o for q in REQUETES_SALARIAT for o in chercher_adzuna(q)]
     ft = [o for q in REQUETES_SALARIAT for o in chercher_france_travail(q)]
     brutes = adzuna + ft
@@ -537,6 +574,8 @@ def partie_salariat():
     print("🏅 Meilleurs scores : " + " | ".join(f"{o['score']} {o['titre'][:40]}" for o in meilleures))
     retenues = sorted([o for o in offres if o["score"] >= SEUIL_SAUVEGARDE],
                       key=lambda o: o["score"], reverse=True)
+    enregistrer_ecartees([o for o in offres
+                          if o["score"] < SEUIL_SAUVEGARDE and not o.get("echec_notation")])
     if len(retenues) > MAX_CONTACTS_PAR_JOUR:
         print(f"ℹ️  {len(retenues) - MAX_CONTACTS_PAR_JOUR} offre(s) reportée(s) à demain (plafond)")
         retenues = retenues[:MAX_CONTACTS_PAR_JOUR]
