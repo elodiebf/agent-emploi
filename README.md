@@ -4,9 +4,8 @@ Robot qui, chaque matin de semaine, collecte des offres d'emploi, les note par r
 
 ## Fonctionnement
 
-1. **Collecte** des offres via deux sources :
+1. **Collecte** des offres via les sources :
    - **Adzuna** : France entière, ce qui couvre le remote.
-   - **France Travail** (API Offres d'emploi v2) : Alpes-Maritimes, CDI uniquement.
 2. **Dédoublonnage** en Python, par identifiant d'offre et par couple titre + entreprise, contre les offres déjà présentes dans Notion.
 3. **Notation** de 0 à 100 par Claude Haiku, par lots de 25 offres.
 4. **Recherche de contact** par Claude Sonnet avec recherche web, uniquement pour les offres notées 60 ou plus. Le plafond est de 15 offres par jour.
@@ -44,13 +43,12 @@ pip install anthropic requests python-dotenv notion-client
 | `NOTION_API_KEY` | Intégration Notion |
 | `NOTION_DB_OFFRES` | Identifiant de la base « Offres d'emploi » |
 | `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` | API Adzuna |
-| `FT_CLIENT_ID`, `FT_CLIENT_SECRET` | API France Travail. Facultatifs : sans eux, cette source est désactivée et un message l'indique dans les logs. |
 
 Ces secrets doivent être transmis au script dans le bloc `env:` de `main.yml`.
 
 Pour exécuter le script en local, place les mêmes variables dans un fichier `.env`. Ce fichier ne doit jamais être commité.
 
-### 3. Accès France Travail
+### 3. Accès France Travail --> L'API est désactivée pour le moment
 
 1. Crée un compte sur [francetravail.io](https://francetravail.io).
 2. Déclare une application.
