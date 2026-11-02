@@ -43,14 +43,6 @@ RESULTATS_PAR_REQUETE = 20
 LUNDI = date.today().weekday() == 0
 ADZUNA_MAX_JOURS = 4 if LUNDI else 2      # paramètre Adzuna « max_days_old »
 
-# France Travail (API Offres d'emploi v2) — activé si les identifiants sont présents
-FT_CLIENT_ID = os.getenv("FT_CLIENT_ID")
-FT_CLIENT_SECRET = os.getenv("FT_CLIENT_SECRET")
-FT_DEPARTEMENTS = ["06"]        # Alpes-Maritimes (le remote national reste couvert par Adzuna)
-FT_PUBLIEE_DEPUIS = 3 if LUNDI else 1   # valeurs acceptées par l'API : 1, 3, 7, 14, 31
-FT_TYPE_CONTRAT = "CDI"         # [CORRECTIF] exclut CDD, intérim, saisonnier
-FT_RESULTATS_PAR_REQUETE = 50
-
 SEUIL_SAUVEGARDE = 60           # score minimum pour enregistrer une offre
 MAX_CONTACTS_PAR_JOUR = 15      # plafond de recherches de contact par exécution
 RECHERCHES_WEB_PAR_OFFRE = 3    # plafond de recherches web par offre (0,01 $ l'une)
@@ -137,10 +129,7 @@ def cle_texte(titre, entreprise):
 
 
 def id_adzuna_depuis_url(url):
-    """Identifiant stable d'une offre à partir de son lien (Adzuna ou France Travail)."""
-    m = re.search(r"francetravail\.fr/offres/recherche/detail/(\w+)", url or "")
-    if m:
-        return f"ft-{m.group(1)}"
+    """Identifiant stable d'une offre Adzuna à partir de son lien."""
     m = re.search(r"/(?:ad|details)/(\d+)", url or "")
     return m.group(1) if m else None
 
@@ -166,8 +155,6 @@ def chercher_adzuna(requete):
     try:
         r = requests.get("https://api.adzuna.com/v1/api/jobs/fr/search/1",
                          params=params, timeout=20)
-          if r.status_code != 200:
-            print(f"⚠️  Jeton France Travail refusé : {r.status_code} {r.text}")
         r.raise_for_status()
         resultats = r.json().get("results", [])
     except Exception as e:
@@ -187,69 +174,6 @@ def chercher_adzuna(requete):
             "salaire": salaire(o),
             "lien": o.get("redirect_url", ""),
         })
-    return offres
-
-
-_ft_token = None
-_ft_avertissement_affiche = False
-
-
-def token_france_travail():
-    global _ft_token
-    if _ft_token:
-        return _ft_token
-    r = requests.post(
-        "https://entreprise.francetravail.fr/connexion/oauth2/access_token",
-        params={"realm": "/partenaire"},
-        data={"grant_type": "client_credentials", "client_id": FT_CLIENT_ID,
-              "client_secret": FT_CLIENT_SECRET, "scope": "api_offresdemploiv2 o2dsoffre"},
-        timeout=20)
-    r.raise_for_status()
-    _ft_token = r.json()["access_token"]
-    return _ft_token
-
-
-def chercher_france_travail(requete):
-    global _ft_avertissement_affiche
-    if not (FT_CLIENT_ID and FT_CLIENT_SECRET):
-        # [CORRECTIF] signale la désactivation au lieu de renvoyer une liste vide en silence
-        if not _ft_avertissement_affiche:
-            print("ℹ️  France Travail désactivé : FT_CLIENT_ID / FT_CLIENT_SECRET absents")
-            _ft_avertissement_affiche = True
-        return []
-    offres = []
-    for dep in FT_DEPARTEMENTS:
-        try:
-            r = requests.get(
-                "https://api.francetravail.io/partenaire/offresdemploi/v2/offres/search",
-                headers={"Authorization": f"Bearer {token_france_travail()}",
-                         "Accept": "application/json"},
-                params={"motsCles": requete, "departement": dep,
-                        "typeContrat": FT_TYPE_CONTRAT,
-                        "publieeDepuis": FT_PUBLIEE_DEPUIS,
-                        "range": f"0-{FT_RESULTATS_PAR_REQUETE - 1}"},
-                timeout=20)
-            if r.status_code == 204:      # aucun résultat
-                continue
-            r.raise_for_status()           # 200 ou 206 (résultats partiels) sont valides
-            resultats = r.json().get("resultats", [])
-        except Exception as e:
-            print(f"⚠️  France Travail en erreur pour « {requete} » ({dep}) : {e}")
-            continue
-        for o in resultats:
-            lieu = o.get("lieuTravail") or {}
-            fid = str(o.get("id", ""))
-            offres.append({
-                "id": f"ft-{fid}",
-                "titre": (o.get("intitule") or "").strip(),
-                "entreprise": ((o.get("entreprise") or {}).get("nom") or "").strip(),
-                "lieu_brut": lieu.get("libelle", ""),
-                "lat": lieu.get("latitude"),
-                "lon": lieu.get("longitude"),
-                "description": nettoyer(o.get("description", "")),
-                "salaire": (o.get("salaire") or {}).get("libelle") or "N/A",
-                "lien": f"https://candidat.francetravail.fr/offres/recherche/detail/{fid}",
-            })
     return offres
 
 
@@ -564,11 +488,8 @@ def partie_salariat():
     ids_vus |= ids_ec
     cles_vues |= cles_ec
     adzuna = [o for q in REQUETES_SALARIAT for o in chercher_adzuna(q)]
-    ft = [o for q in REQUETES_SALARIAT for o in chercher_france_travail(q)]
-    brutes = adzuna + ft
-    offres = nouvelles_offres(brutes, ids_vus, cles_vues)
-    print(f"🔎 Salariat : {len(adzuna)} résultats Adzuna, {len(ft)} France Travail, "
-          f"{len(offres)} nouvelles offres à noter")
+    offres = nouvelles_offres(adzuna, ids_vus, cles_vues)
+    print(f"🔎 Salariat : {len(adzuna)} résultats Adzuna, {len(offres)} nouvelles offres à noter")
     if not offres:
         return
     noter_offres(offres, "CDI / salariat")
