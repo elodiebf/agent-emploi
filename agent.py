@@ -33,9 +33,8 @@ from profil import MON_PROFIL
 MODELE_TRI = "claude-haiku-5-5"        # notation des offres (peu coûteux)
 MODELE_CONTACT = "claude-sonnet-5-5"   # recherche de contact + message
 
-# [CORRECTIF] ajout de « Analytics Engineer » (ton positionnement) — retire-le si tu ne le veux pas
 REQUETES_SALARIAT = ["Lead Data Engineer", "Chef de projet data", "Senior Data Analyst",
-                     "Analytics Engineer"]
+                     "Analytics Engineer", "Product Manager"]
 RESULTATS_PAR_REQUETE = 20
 
 # [CORRECTIF] fenêtre de fraîcheur courte pour ne pas renoter chaque jour les mêmes offres.
